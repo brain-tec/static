@@ -1,0 +1,145 @@
+name: "CI Workflow Unit Tests"
+on: 
+  workflow_call:
+    inputs:
+      unit_tests_check_command: 
+        required: true
+        type: string
+jobs:
+
+  testing:
+    name: "Unit Tests"
+    runs-on: ubuntu-latest
+    env:
+      PY_VERSION: 3.6
+      PYTHONUNBUFFERED: 1
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+        with:
+          token: ${{ secrets.ACTIONS_READ_TOKEN }}
+          path: main
+      - name: Checkout BT-CLI
+        uses: actions/checkout@v2
+        with:
+          ref: shallow-clones
+          token: ${{ secrets.ACTIONS_READ_TOKEN }}
+          repository: brain-tec/bt-docker.git
+          path: 'bt-docker'
+      - name: Install Python
+        uses: actions/setup-python@v4
+        id: python
+        with:
+          python-version: ${{ env.PY_VERSION }}
+          cache: 'pip'
+      - name: Install BT-CLI
+        run: 'pip install -I ./bt-docker'
+      - name: Check BT CLI installation
+        run: 'bt --version'
+      - name: Install SSH Key
+        run: |
+          mkdir -p $HOME/.ssh
+          echo "${{ secrets.ACTIONS_READ_SSH }}" > $HOME/.ssh/id_ed25519
+          chmod 600 $HOME/.ssh/id_ed25519
+      - name: Clone Submodules and Update Stack
+        run: |
+          cd main
+          bt project bootstrap
+          SHALLOW=1 JOBS=8 bt project update --build
+      - name: Run Tests
+        #Hack to get a TTY
+        shell: 'script -q -e -c "bash {0}"'
+        run: |
+          cd main
+          sudo chown 1000:1000 .braintec/client-data/filestore
+          ${{ inputs.unit_tests_check_command }}
+      - name: Log Modules
+        if: always()
+        run: |
+          if test -f main/logs/*/modules.log; then
+            cd main/logs
+            find . -name "*modules.log" -exec cat {} \;
+            exit 0
+          else
+            echo "Not found log for modules installed/tested"
+            exit 1
+          fi;
+      - name: Log Init DB
+        if: always()
+        run: |
+          if test -f main/logs/*/init_out.log; then
+            cd main/logs
+            find . -name "*init_out.log" -exec cat {} \;
+            exit 0
+          else
+            echo "Not found log for initialization of db"
+            exit 1
+          fi;
+      - name: Log Install Modules
+        if: always()
+        run: |
+          if test -f main/logs/*/install_out.log; then
+            cd main/logs
+            find . -name "*install_out.log" -exec cat {} \;
+            if grep -q "Failed to initialize database" ./*/install_out.log; then 
+              grep "Failed to initialize database" ./*/install_out.log
+              echo "Some error happened during the installation of modules"
+              exit 1
+            else
+              echo "All modules were installed appropriately"
+              exit 0
+            fi;
+          else
+            echo "Not found log for installation of modules"
+            exit 1
+          fi;
+      - name: Log Tests
+        if: always()
+        run: |
+          if test -f main/logs/*/tests_out.log; then
+            cd main/logs
+            find . -name "*tests_out.log" -exec cat {} \;
+            if grep -q "odoo.modules.module: Module" ./*/tests_out.log; then 
+              grep "odoo.modules.module: Module" ./*/tests_out.log
+              echo "Some errors happened during the tests"
+              exit 1
+            else
+              echo "All tests are passing"
+              exit 0
+            fi;
+          else
+            echo "Not found log for tests"
+            exit 1
+          fi;
+      - name: Log Summary
+        if: always()
+        run: |
+          if test -f main/logs/*/summary.log; then
+            cd main/logs
+            find . -name "*summary.log" -exec cat {} \;
+            exit 0
+          else
+            echo "Not found summary log"
+            exit 1
+          fi;
+      - name: Log Summary - Modules with errors and failures
+        if: always()
+        run: |
+          if test -f main/logs/*/tests_out.log; then
+            if grep -q "odoo.modules.module: Module" main/logs/*/tests_out.log; then 
+              grep "odoo.modules.module: Module" main/logs/*/tests_out.log
+              echo "Some errors where found in the tests"
+              exit 1
+            else
+              echo "All tests are passing"
+              exit 0
+            fi;
+          else
+             echo "Not found log for tests"
+             exit 1
+          fi;
+      # Always run as last step
+      - name: Cleanup
+        if: always()
+        run: |
+          rm -f $HOME/.ssh/id_ed25519
