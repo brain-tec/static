@@ -1,0 +1,45 @@
+name: "CI Workflow Code Quality"
+on: 
+  workflow_call:
+    inputs:
+      code_quality_check_command: 
+        required: true
+        type: string
+jobs:
+
+  linters:
+    name: Code Quality checks
+    runs-on: ubuntu-20.04
+    env:
+      PY_VERSION: 3.6
+      PYTHONUNBUFFERED: 1
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+        with:
+          token: ${{ secrets.ACTIONS_READ_TOKEN }}
+          path: main
+      - name: Checkout BT-CLI
+        uses: actions/checkout@v2
+        with:
+          ref: master
+          token: ${{ secrets.ACTIONS_READ_TOKEN }}
+          repository: brain-tec/bt-docker.git
+          path: 'bt-docker'
+      - name: Install Python
+        uses: actions/setup-python@v4
+        id: python
+        with:
+          python-version: ${{ env.PY_VERSION }}
+          cache: 'pip'
+      - name: Install BT-CLI
+        run: 'pip install -I ./bt-docker'
+      - name: Getting Pylint
+        run: 'docker pull registry.braintec-group.com/bt-pylint:${{ env.PY_VERSION }}'
+      - name: Check BT CLI installation
+        run: 'bt --version'
+      - name: Run Code Quality checks
+        run: |
+          cd main
+          ${{ inputs.code_quality_check_command }}
+  
